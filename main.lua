@@ -1,275 +1,298 @@
---// Doge's Menu
+--// Doge’s Menu v3.3 (Dark Kavo, Drawing API) //--
+
+--// Services
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local StarterGui = game:GetService("StarterGui")
+local TeleportService = game:GetService("TeleportService")
+local VirtualUser = game:GetService("VirtualUser")
+local HttpService = game:GetService("HttpService")
+
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
--- UI Library
+--// Library
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
-local Window = Library.CreateLib("Doge's Menu", "DarkTheme")
+local Window = Library.CreateLib("Doge's Menu v3.3", "DarkTheme")
 
--- Vars
-local wsLoop
-local currentWS = 16
-local uiVisible = true
-
--- ESP state
-local espObjects = {names = {}, chams = {}}
-local chamOpacity = 0.5
-local chamColor = nil
-local nameColor = nil
-
--- Notify helper
-local function notify(text)
-    pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = "Doge's Menu",
-            Text = text,
-            Duration = 3
-        })
-    end)
-end
-
-notify("Doge's Menu Loaded - Press F6 to toggle")
-
--- === Find the Kavo ScreenGui reliably ===
-local function findMenuGui()
-    local sg = game.CoreGui:FindFirstChild("Doge's Menu")
-    if sg and sg:IsA("ScreenGui") then return sg end
-    for _, inst in ipairs(game.CoreGui:GetChildren()) do
-        if inst:IsA("ScreenGui") then
-            local n = inst.Name:lower()
-            if n:find("kavo") or n:find("doge") then
-                return inst
-            end
-        end
-    end
-    for _, d in ipairs(game.CoreGui:GetDescendants()) do
-        if d:IsA("TextLabel") and d.Text == "Doge's Menu" then
-            local sg2 = d:FindFirstAncestorOfClass("ScreenGui")
-            if sg2 then return sg2 end
-        end
-    end
-    return nil
-end
-
--- Wait briefly for library to mount GUI
-local MenuGui
-do
-    for _ = 1, 100 do
-        MenuGui = findMenuGui()
-        if MenuGui then break end
-        task.wait(0.03)
-    end
-end
-
--- F6 toggle (toggling the ScreenGui.Enabled)
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.F6 then
-        uiVisible = not uiVisible
-        MenuGui = MenuGui or findMenuGui()
-        if MenuGui then
-            if MenuGui:IsA("ScreenGui") then
-                MenuGui.Enabled = uiVisible
-            else
-                local rootFrame = MenuGui:FindFirstChildOfClass("Frame")
-                if rootFrame then rootFrame.Visible = uiVisible end
-            end
-        end
-        notify(uiVisible and "Menu Opened (F6)" or "Menu Closed (F6)")
-    end
-end)
-
--- // MAIN TAB
-local MainTab = Window:NewTab("Main")
-local MainSection = MainTab:NewSection("Player Controls")
-
--- Toggle WalkSpeed
-MainSection:NewToggle("Toggle WalkSpeed", "Enable/Disable custom WalkSpeed", function(toggled)
-    if toggled then
-        wsLoop = RunService.Heartbeat:Connect(function()
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-                LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = currentWS
-            end
-        end)
-    else
-        if wsLoop then wsLoop:Disconnect() wsLoop = nil end
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-            LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16
-        end
-    end
-end)
-
--- WalkSpeed Slider
-MainSection:NewSlider("WalkSpeed", "Change WalkSpeed", 200, 20, function(s)
-    currentWS = s
-    if wsLoop then
-        LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = currentWS
-    end
-end)
-
--- Go Up
-MainSection:NewButton("Go Up", "Teleport 100 studs up", function()
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame *= CFrame.new(0,100,0)
-    end
-end)
-
--- Go Down
-MainSection:NewButton("Go Down", "Teleport 10 studs down", function()
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame *= CFrame.new(0,-10,0)
-    end
-end)
-
--- // VISUAL TAB
-local VisualTab = Window:NewTab("Visual")
-local VisualSection = VisualTab:NewSection("ESP")
-
--- Helper functions
-local function addNameESP(plr)
-    if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("Head") then
-        if plr.Character.Head:FindFirstChild("NameESP") then return end
-        local bb = Instance.new("BillboardGui", plr.Character.Head)
-        bb.Name = "NameESP"
-        bb.Size = UDim2.new(0,200,0,50)
-        bb.Adornee = plr.Character.Head
-        bb.AlwaysOnTop = true
-        bb.StudsOffset = Vector3.new(0, 2, 0)
-
-        local label = Instance.new("TextLabel", bb)
-        label.Size = UDim2.new(1,0,1,0)
-        label.BackgroundTransparency = 1
-        label.Text = plr.Name
-        label.TextScaled = true
-        label.Font = Enum.Font.SourceSansBold
-
-        if nameColor then
-            label.TextColor3 = nameColor
-        elseif plr.Team and plr.Team.TeamColor then
-            label.TextColor3 = plr.Team.TeamColor.Color
-        else
-            label.TextColor3 = Color3.new(1,1,1)
-        end
-
-        espObjects.names[plr] = bb
-    end
-end
-
-local function removeNameESP(plr)
-    if espObjects.names[plr] then
-        espObjects.names[plr]:Destroy()
-        espObjects.names[plr] = nil
-    end
-end
-
-local function addChams(plr)
-    if plr ~= LocalPlayer and plr.Character then
-        if plr.Character:FindFirstChild("ChamsESP") then return end
-        local h = Instance.new("Highlight", plr.Character)
-        h.Name = "ChamsESP"
-        if chamColor then
-            h.FillColor = chamColor
-        elseif plr.Team and plr.Team.TeamColor then
-            h.FillColor = plr.Team.TeamColor.Color
-        else
-            h.FillColor = Color3.new(1,1,1)
-        end
-        h.FillTransparency = 1 - chamOpacity
-        h.OutlineTransparency = 1
-        espObjects.chams[plr] = h
-    end
-end
-
-local function removeChams(plr)
-    if espObjects.chams[plr] then
-        espObjects.chams[plr]:Destroy()
-        espObjects.chams[plr] = nil
-    end
-end
-
--- Name ESP Toggle
-VisualSection:NewToggle("See Players Name", "Show usernames above heads", function(state)
-    if state then
-        for _,plr in pairs(Players:GetPlayers()) do addNameESP(plr) end
-        Players.PlayerAdded:Connect(addNameESP)
-        Players.PlayerRemoving:Connect(removeNameESP)
-    else
-        for _,obj in pairs(espObjects.names) do obj:Destroy() end
-        espObjects.names = {}
-    end
-end)
-
--- Chams ESP Toggle
-VisualSection:NewToggle("Chams ESP", "Player highlights", function(state)
-    if state then
-        for _,plr in pairs(Players:GetPlayers()) do addChams(plr) end
-        Players.PlayerAdded:Connect(addChams)
-        Players.PlayerRemoving:Connect(removeChams)
-    else
-        for _,obj in pairs(espObjects.chams) do obj:Destroy() end
-        espObjects.chams = {}
-    end
-end)
-
--- Chams Opacity
-VisualSection:NewSlider("Chams Opacity", "Set Chams transparency (1-100)", 100, 1, function(val)
-    chamOpacity = val / 100
-    for _,h in pairs(espObjects.chams) do
-        h.FillTransparency = 1 - chamOpacity
-    end
-end)
-
--- // SETTINGS TAB
+--// Tabs
+local MovementTab = Window:NewTab("Movement")
+local CombatTab   = Window:NewTab("Combat")
+local VisualsTab  = Window:NewTab("Visuals")
+local UtilitiesTab= Window:NewTab("Utilities")
 local SettingsTab = Window:NewTab("Settings")
-local SettingsSection = SettingsTab:NewSection("ESP Colors")
 
--- Chams color picker
-SettingsSection:NewColorPicker("Chams Color", "Pick color for Chams", Color3.fromRGB(255,255,255), function(c)
-    chamColor = c
-    for _,h in pairs(espObjects.chams) do
-        h.FillColor = chamColor
+--// Sections
+local MovementSection = MovementTab:NewSection("Player Movement")
+local VerticalSection = MovementTab:NewSection("Vertical Movement")
+local CombatSection   = CombatTab:NewSection("Combat")
+local VisualsSection  = VisualsTab:NewSection("ESP Options")
+local UtilitiesSection= UtilitiesTab:NewSection("Utilities")
+local SettingsSection = SettingsTab:NewSection("ESP Settings")
+
+--// Toggles & Vars
+local Toggles = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    PlayerFOV = 70,
+    Noclip = false,
+    Aimbot = false,
+    FOVCircle = false,
+    ESP_Box = false,
+    ESP_Name = false,
+    ESP_Health = false,
+    ESP_Chams = false,
+}
+
+local StudsUp = 10
+local StudsDown = 10
+local ESPColor = Color3.fromRGB(0,255,0)
+local ESPOpacity = {
+    Box = 1,
+    Name = 1,
+    Health = 1,
+    Chams = 0.5,
+}
+local FOVSize = 100
+
+--// WalkSpeed + Safety Check
+MovementSection:NewSlider("WalkSpeed", "Sets WalkSpeed", 500, 16, function(val)
+    if val > 180 then
+        Library:Notify("Warning: WalkSpeed above 180 may flag!")
+    end
+    Toggles.WalkSpeed = val
+    LocalPlayer.Character.Humanoid.WalkSpeed = val
+end)
+
+MovementSection:NewSlider("JumpPower", "Sets JumpPower", 300, 50, function(val)
+    Toggles.JumpPower = val
+    LocalPlayer.Character.Humanoid.JumpPower = val
+end)
+
+MovementSection:NewSlider("Player FOV", "Sets Field of View", 120, 70, function(val)
+    Toggles.PlayerFOV = val
+    Camera.FieldOfView = val
+end)
+
+--// Go Up / Go Down with TextBox + Button
+VerticalSection:NewTextBox("Go Up Studs", "Set studs to go up", tostring(StudsUp), function(val)
+    local num = tonumber(val)
+    if num then StudsUp = num end
+end)
+VerticalSection:NewButton("Go Up", "Moves you upward", function()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, StudsUp, 0)
     end
 end)
 
--- Reset Chams color
-SettingsSection:NewButton("Reset Chams Color", "Reset to team colors", function()
-    chamColor = nil
-    for _,plr in pairs(Players:GetPlayers()) do
-        local h = plr.Character and plr.Character:FindFirstChild("ChamsESP")
-        if h then
-            if plr.Team and plr.Team.TeamColor then
-                h.FillColor = plr.Team.TeamColor.Color
-            else
-                h.FillColor = Color3.new(1,1,1)
+VerticalSection:NewTextBox("Go Down Studs", "Set studs to go down", tostring(StudsDown), function(val)
+    local num = tonumber(val)
+    if num then StudsDown = num end
+end)
+VerticalSection:NewButton("Go Down", "Moves you downward", function()
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, -StudsDown, 0)
+    end
+end)
+
+--// Noclip Toggle + Keybind (Hold N)
+MovementSection:NewToggle("Noclip (Hold N)", "Hold N while toggle is on", function(state)
+    Toggles.Noclip = state
+end)
+
+local holdingN = false
+
+UIS.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == Enum.KeyCode.N then
+        holdingN = true
+    end
+end)
+
+UIS.InputEnded:Connect(function(input, gpe)
+    if input.KeyCode == Enum.KeyCode.N then
+        holdingN = false
+        -- reset collisions when N is released
+        if LocalPlayer.Character then
+            for _,part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
             end
         end
     end
 end)
 
--- Name ESP color picker
-SettingsSection:NewColorPicker("Name ESP Color", "Pick color for names", Color3.fromRGB(255,255,255), function(c)
-    nameColor = c
-    for _,bb in pairs(espObjects.names) do
-        local label = bb:FindFirstChildOfClass("TextLabel")
-        if label then label.TextColor3 = nameColor end
+--// Combat
+CombatSection:NewToggle("Aimbot (RMB)", "Locks onto enemies with RMB", function(state)
+    Toggles.Aimbot = state
+end)
+CombatSection:NewToggle("FOV Circle", "Toggle FOV Circle", function(state)
+    Toggles.FOVCircle = state
+end)
+CombatSection:NewSlider("FOV Size", "Adjust FOV Circle Size", 500, 100, function(val)
+    FOVSize = val
+end)
+
+--// Visuals (ESP)
+VisualsSection:NewToggle("Box ESP", "Shows 2D box", function(state) Toggles.ESP_Box = state end)
+VisualsSection:NewSlider("Box Opacity", "Opacity for Box", 100, 100, function(val)
+    ESPOpacity.Box = val/100
+end)
+
+VisualsSection:NewToggle("Name ESP", "Shows player names", function(state) Toggles.ESP_Name = state end)
+VisualsSection:NewSlider("Name Opacity", "Opacity for Names", 100, 100, function(val)
+    ESPOpacity.Name = val/100
+end)
+
+VisualsSection:NewToggle("Health ESP", "Shows health bars", function(state) Toggles.ESP_Health = state end)
+VisualsSection:NewSlider("Health Opacity", "Opacity for Health", 100, 100, function(val)
+    ESPOpacity.Health = val/100
+end)
+
+VisualsSection:NewToggle("Chams ESP", "Shows through walls", function(state) Toggles.ESP_Chams = state end)
+VisualsSection:NewSlider("Chams Opacity", "Opacity for Chams", 100, 50, function(val)
+    ESPOpacity.Chams = val/100
+end)
+
+--// Utilities
+UtilitiesSection:NewButton("Rejoin", "Rejoins current server", function()
+    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+end)
+UtilitiesSection:NewButton("Server Hop", "Hops to another server", function()
+    TeleportService:Teleport(game.PlaceId)
+end)
+UtilitiesSection:NewButton("Reset Character", "Respawns your character", function()
+    LocalPlayer.Character:BreakJoints()
+end)
+
+--// Settings
+SettingsSection:NewColorPicker("ESP Color", "Pick ESP Color", ESPColor, function(c)
+    ESPColor = c
+end)
+
+--// ESP + Drawing Loop
+local function CreateDrawing(type, props)
+    local obj = Drawing.new(type)
+    for i,v in pairs(props) do obj[i] = v end
+    return obj
+end
+
+local FOVCircle = CreateDrawing("Circle", {
+    Visible = false,
+    Radius = FOVSize,
+    Thickness = 1,
+    Color = ESPColor,
+    NumSides = 64,
+    Filled = false,
+    Transparency = 1
+})
+
+--// Aimbot hold state
+local aiming = false
+UIS.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aiming = true
+    end
+end)
+UIS.InputEnded:Connect(function(input, gpe)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aiming = false
     end
 end)
 
--- Reset Name ESP color
-SettingsSection:NewButton("Reset Name ESP Color", "Reset to team colors", function()
-    nameColor = nil
+RunService.RenderStepped:Connect(function()
+    -- FOV
+    FOVCircle.Radius = FOVSize
+    FOVCircle.Visible = Toggles.FOVCircle
+    FOVCircle.Color = ESPColor
+    FOVCircle.Position = UIS:GetMouseLocation()
+
+    -- Noclip (only when toggle is on AND N is held)
+    if Toggles.Noclip and holdingN and LocalPlayer.Character then
+        for _,part in pairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+
+    -- Aimbot (continuous while holding RMB)
+    if Toggles.Aimbot and aiming then
+        local closest, dist = nil, math.huge
+        for _,plr in pairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Team ~= LocalPlayer.Team and plr.Character and plr.Character:FindFirstChild("Head") then
+                local pos,vis = Camera:WorldToViewportPoint(plr.Character.Head.Position)
+                if vis then
+                    local mousePos = UIS:GetMouseLocation()
+                    local mag = (Vector2.new(pos.X,pos.Y)-mousePos).Magnitude
+                    if mag < dist and mag < FOVSize then
+                        closest, dist = plr, mag
+                    end
+                end
+            end
+        end
+        if closest then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, closest.Character.Head.Position)
+        end
+    end
+
+    -- ESP loop
     for _,plr in pairs(Players:GetPlayers()) do
-        local bb = espObjects.names[plr]
-        if bb then
-            local label = bb:FindFirstChildOfClass("TextLabel")
-            if label then
-                if plr.Team and plr.Team.TeamColor then
-                    label.TextColor3 = plr.Team.TeamColor.Color
-                else
-                    label.TextColor3 = Color3.new(1,1,1)
+        if plr ~= LocalPlayer and plr.Team ~= LocalPlayer.Team and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = plr.Character.HumanoidRootPart
+            local head = plr.Character:FindFirstChild("Head")
+            local hum = plr.Character:FindFirstChild("Humanoid")
+
+            local pos, vis = Camera:WorldToViewportPoint(hrp.Position)
+            if vis then
+                if Toggles.ESP_Name then
+                    local nameTag = CreateDrawing("Text", {
+                        Text = plr.Name,
+                        Position = Vector2.new(pos.X, pos.Y - 40),
+                        Size = 13,
+                        Center = true,
+                        Color = ESPColor,
+                        Transparency = ESPOpacity.Name,
+                        Visible = true
+                    })
+                    task.delay(0.01,function() nameTag:Remove() end)
+                end
+                if Toggles.ESP_Health and hum then
+                    local hpFrac = hum.Health / hum.MaxHealth
+                    local hpBar = CreateDrawing("Square", {
+                        Position = Vector2.new(pos.X - 25, pos.Y - 55),
+                        Size = Vector2.new(50 * hpFrac, 6),
+                        Color = Color3.fromRGB(0,255,0),
+                        Filled = true,
+                        Transparency = ESPOpacity.Health,
+                        Visible = true
+                    })
+                    task.delay(0.01,function() hpBar:Remove() end)
+                end
+                if Toggles.ESP_Box and head then
+                    local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
+                    local hrpPos = Camera:WorldToViewportPoint(hrp.Position)
+                    local boxHeight = math.abs(headPos.Y - hrpPos.Y)
+                    local boxWidth = boxHeight / 2
+                    local box = CreateDrawing("Square", {
+                        Position = Vector2.new(headPos.X - boxWidth/2, headPos.Y),
+                        Size = Vector2.new(boxWidth, boxHeight),
+                        Color = ESPColor,
+                        Thickness = 1,
+                        Transparency = ESPOpacity.Box,
+                        Visible = true
+                    })
+                    task.delay(0.01,function() box:Remove() end)
+                end
+                if Toggles.ESP_Chams then
+                    for _,part in pairs(plr.Character:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            part.Transparency = 1 - ESPOpacity.Chams
+                            part.Color = ESPColor
+                        end
+                    end
                 end
             end
         end
