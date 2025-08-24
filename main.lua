@@ -589,3 +589,93 @@ RunService.RenderStepped:Connect(function()
         end
     end
 end)
+----------------------------------------------------------------
+-- Movement Upgrades: Fly, Air Walk, Infinite Jump
+----------------------------------------------------------------
+
+--// Fly
+local FlyEnabled = false
+local FlySpeed = 50
+local flyVel, flyGyro
+
+MovementSection:NewToggle("Fly (Toggle)", "Classic smooth fly", function(state)
+    FlyEnabled = state
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        local hrp = char.HumanoidRootPart
+        if state then
+            flyVel = Instance.new("BodyVelocity")
+            flyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            flyVel.Velocity = Vector3.zero
+            flyVel.Parent = hrp
+
+            flyGyro = Instance.new("BodyGyro")
+            flyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+            flyGyro.CFrame = hrp.CFrame
+            flyGyro.Parent = hrp
+        else
+            if flyVel then flyVel:Destroy() end
+            if flyGyro then flyGyro:Destroy() end
+        end
+    end
+end)
+
+MovementSection:NewSlider("Fly Speed", "Speed while flying", 200, 10, function(val)
+    FlySpeed = val
+end)
+
+RunService.RenderStepped:Connect(function()
+    if FlyEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        local camCF = Camera.CFrame
+        flyVel.Velocity = ((camCF.LookVector * (UIS:IsKeyDown(Enum.KeyCode.W) and FlySpeed or 0))
+            + (-camCF.LookVector * (UIS:IsKeyDown(Enum.KeyCode.S) and FlySpeed or 0))
+            + (camCF.RightVector * (UIS:IsKeyDown(Enum.KeyCode.D) and FlySpeed or 0))
+            + (-camCF.RightVector * (UIS:IsKeyDown(Enum.KeyCode.A) and FlySpeed or 0)))
+            + (Vector3.new(0,FlySpeed,0) * (UIS:IsKeyDown(Enum.KeyCode.Space) and 1 or 0))
+            + (Vector3.new(0,-FlySpeed,0) * (UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 1 or 0))
+
+        flyGyro.CFrame = camCF
+    end
+end)
+
+--// Air Walk
+local AirWalkEnabled = false
+local platform
+
+MovementSection:NewToggle("Air Walk", "Walk in midair", function(state)
+    AirWalkEnabled = state
+    if not state and platform then
+        platform:Destroy()
+        platform = nil
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if AirWalkEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        if not platform then
+            platform = Instance.new("Part")
+            platform.Size = Vector3.new(50,1,50)
+            platform.Anchored = true
+            platform.Transparency = 1
+            platform.CanCollide = true
+            platform.Name = "AirWalkPlatform"
+            platform.Parent = workspace
+        end
+        platform.CFrame = CFrame.new(hrp.Position - Vector3.new(0, 3, 0))
+    end
+end)
+
+--// Infinite Jump
+local InfJumpEnabled = false
+
+MovementSection:NewToggle("Infinite Jump", "Jump infinitely by pressing space", function(state)
+    InfJumpEnabled = state
+end)
+
+UIS.JumpRequest:Connect(function()
+    if InfJumpEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
