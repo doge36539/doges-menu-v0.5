@@ -527,68 +527,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-----------------------------------------------------------------
--- Combat Upgrades: Smooth Aimbot + Priority + Toggle
-----------------------------------------------------------------
-local AimbotToggleKey = Enum.KeyCode.R -- can be changed in Settings
-local AimbotToggled = false
-local AimbotSmoothness = 0.25
-local AimbotPriority = "Closest" -- "Closest" or "LowestHP"
 
-CombatSection:NewSlider("Smoothness", "How smoothly aim follows (0=snappy)", 100, 0, function(val)
-    AimbotSmoothness = val/100
-end)
-
-CombatSection:NewDropdown("Priority", "Target priority system", {"Closest", "LowestHP"}, function(opt)
-    AimbotPriority = opt
-end)
-
-CombatSection:NewKeybind("Aimbot Toggle Key", "Keybind to toggle aimbot (on/off)", AimbotToggleKey, function()
-    AimbotToggled = not AimbotToggled
-end)
-
--- Modify target finder
-local function getBestTarget(radius)
-    local mouse = UIS:GetMouseLocation()
-    local best, bestScore = nil, math.huge
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and isEnemy(plr) and plr.Character and plr.Character:FindFirstChild("Head") then
-            local pos, vis = Camera:WorldToViewportPoint(plr.Character.Head.Position)
-            if vis then
-                local dist2d = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
-                if dist2d <= radius then
-                    if AimbotPriority == "Closest" then
-                        if dist2d < bestScore then
-                            best, bestScore = plr, dist2d
-                        end
-                    elseif AimbotPriority == "LowestHP" then
-                        local hum = getHumanoid(plr.Character)
-                        if hum and hum.Health < bestScore then
-                            best, bestScore = plr, hum.Health
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
--- Modify RenderStepped for aimbot
-RunService.RenderStepped:Connect(function()
-    if AimbotEnabled and (UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) or AimbotToggled) then
-        local target = getBestTarget(AimbotFOV)
-        if target and target.Character and target.Character:FindFirstChild("Head") then
-            local headPos = target.Character.Head.Position
-            local newCF = CFrame.new(Camera.CFrame.Position, headPos)
-            if AimbotSmoothness > 0 then
-                Camera.CFrame = Camera.CFrame:Lerp(newCF, AimbotSmoothness)
-            else
-                Camera.CFrame = newCF
-            end
-        end
-    end
-end)
 ----------------------------------------------------------------
 -- Movement Upgrades: Fly, Air Walk, Infinite Jump
 ----------------------------------------------------------------
@@ -596,26 +535,20 @@ end)
 --// Fly
 local FlyEnabled = false
 local FlySpeed = 50
-local flyVel, flyGyro
 
-MovementSection:NewToggle("Fly (Toggle)", "Classic smooth fly", function(state)
+MovementSection:NewToggle("Fly (Toggle)", "Smooth fly with NO drift", function(state)
     FlyEnabled = state
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local hrp = char.HumanoidRootPart
         if state then
-            flyVel = Instance.new("BodyVelocity")
-            flyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            flyVel.Velocity = Vector3.zero
-            flyVel.Parent = hrp
-
-            flyGyro = Instance.new("BodyGyro")
-            flyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-            flyGyro.CFrame = hrp.CFrame
-            flyGyro.Parent = hrp
+            -- Disable gravity + humanoid physics influence
+            workspace.Gravity = 0
+            hrp.Velocity = Vector3.zero
+            hrp.AssemblyLinearVelocity = Vector3.zero
         else
-            if flyVel then flyVel:Destroy() end
-            if flyGyro then flyGyro:Destroy() end
+            -- Restore gravity
+            workspace.Gravity = 196.2
         end
     end
 end)
@@ -628,14 +561,24 @@ RunService.RenderStepped:Connect(function()
     if FlyEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local hrp = LocalPlayer.Character.HumanoidRootPart
         local camCF = Camera.CFrame
-        flyVel.Velocity = ((camCF.LookVector * (UIS:IsKeyDown(Enum.KeyCode.W) and FlySpeed or 0))
-            + (-camCF.LookVector * (UIS:IsKeyDown(Enum.KeyCode.S) and FlySpeed or 0))
-            + (camCF.RightVector * (UIS:IsKeyDown(Enum.KeyCode.D) and FlySpeed or 0))
-            + (-camCF.RightVector * (UIS:IsKeyDown(Enum.KeyCode.A) and FlySpeed or 0)))
-            + (Vector3.new(0,FlySpeed,0) * (UIS:IsKeyDown(Enum.KeyCode.Space) and 1 or 0))
-            + (Vector3.new(0,-FlySpeed,0) * (UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 1 or 0))
 
-        flyGyro.CFrame = camCF
+        -- Build movement vector from key inputs
+        local move = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W) then move += camCF.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then move -= camCF.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then move += camCF.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then move -= camCF.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0,1,0) end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0,1,0) end
+
+        -- If pressing something → move, else freeze in place
+        if move.Magnitude > 0 then
+            hrp.CFrame = hrp.CFrame + (move.Unit * FlySpeed * RunService.RenderStepped:Wait())
+        end
+
+        -- Forcefully zero momentum so no drift happens
+        hrp.Velocity = Vector3.zero
+        hrp.AssemblyLinearVelocity = Vector3.zero
     end
 end)
 
