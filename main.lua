@@ -1,4 +1,4 @@
---// Doge's Menu v3.9 (Dark Kavo, stable, enemy-only ESP + fixes) --
+--// Doge's Menu v3.9 (Dark Kavo, enemy-only ESP, dynamic HP bar, X=toggle) --
 
 --// Services
 local Players = game:GetService("Players")
@@ -6,6 +6,7 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local Lighting = game:GetService("Lighting")
+local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -13,6 +14,29 @@ local Camera = workspace.CurrentCamera
 --// UI Library
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
 local Window = Library.CreateLib("Doge's Menu v3.9", "DarkTheme")
+
+-- Hook the library's close/X to toggle instead of unload/hard close
+local Hooked = setmetatable({}, {__mode = "k"})
+local function hookCloseButtons(root)
+    root = root or CoreGui
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("TextButton") then
+            local okText = pcall(function() return obj.Text end)
+            local t = okText and (obj.Text or "") or ""
+            local name = obj.Name and string.lower(obj.Name) or ""
+            if (t == "X" or name:find("close") or name:find("exit")) and not Hooked[obj] then
+                Hooked[obj] = true
+                obj.MouseButton1Click:Connect(function()
+                    pcall(function() Library:ToggleUI() end)
+                end)
+            end
+        end
+    end
+end
+hookCloseButtons(CoreGui)
+CoreGui.DescendantAdded:Connect(function(inst)
+    if inst:IsA("TextButton") then hookCloseButtons(inst) end
+end)
 
 --// Tabs + Sections
 local MovementTab = Window:NewTab("Movement")
@@ -32,7 +56,6 @@ local SettingsSection = SettingsTab:NewSection("UI / Options")
 -- Helpers
 ----------------------------------------------------------------
 local function isEnemy(plr)
-    -- Enemy-only logic; if no teams are present, treat everyone as enemy
     if LocalPlayer.Team and plr.Team then
         return plr.Team ~= LocalPlayer.Team
     end
@@ -41,6 +64,15 @@ end
 
 local function getHumanoid(char)
     return char and (char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("Humanoid"))
+end
+
+local function lerp(a, b, t)
+    return a + (b - a) * t
+end
+
+local function hpColor(frac)
+    -- 0 -> red(1,0,0), 1 -> green(0,1,0)
+    return Color3.new(1 - frac, frac, 0)
 end
 
 ----------------------------------------------------------------
@@ -185,11 +217,14 @@ VisualsSection:NewSlider("Name Opacity", "Opacity for names", 100, 0, function(v
 VisualsSection:NewToggle("Box ESP (Enemies)", "Draw boxes around enemies", function(s) ESP.Enabled.Box = s end)
 VisualsSection:NewSlider("Box Opacity", "Opacity for boxes", 100, 0, function(v) ESP.Opacity.Box = v/100 end)
 
-VisualsSection:NewToggle("Health ESP (Enemies)", "Enemy health bars", function(s) ESP.Enabled.Health = s end)
+VisualsSection:NewToggle("Health ESP (Enemies)", "Enemy health bars (dynamic color)", function(s) ESP.Enabled.Health = s end)
 VisualsSection:NewSlider("Health Opacity", "Opacity for health bars", 100, 0, function(v) ESP.Opacity.Health = v/100 end)
 
 VisualsSection:NewToggle("Chams ESP (Enemies)", "Full-body highlight for enemies", function(s) ESP.Enabled.Chams = s end)
 VisualsSection:NewSlider("Chams Opacity", "Opacity for chams", 100, 0, function(v) ESP.Opacity.Chams = v/100 end)
+
+-- Name color override lives in Settings (not Visuals)
+local NameOverride = {Enabled = false, Color = Color3.fromRGB(255,255,255)}
 
 -- Highlight system for Chams (enemy-only)
 local function ensureHighlight(char)
@@ -211,7 +246,7 @@ local function destroyDrawingFor(plr)
     local t = Drawings[plr]
     if not t then return end
     for _, obj in pairs(t) do
-        pcall(function() obj.Visible = false obj:Remove() end)
+        pcall(function() if obj then obj.Visible = false obj:Remove() end end)
     end
     Drawings[plr] = nil
 end
@@ -220,17 +255,20 @@ local function getDrawing(plr)
     if not Drawings[plr] then
         local okText, nameObj = pcall(function() return Drawing.new("Text") end)
         local okBox, boxObj = pcall(function() return Drawing.new("Square") end)
-        local okLine, hpObj = pcall(function() return Drawing.new("Line") end)
+        local okBG, hpBG = pcall(function() return Drawing.new("Square") end)
+        local okFG, hpFG = pcall(function() return Drawing.new("Square") end)
 
         Drawings[plr] = {
             Name = okText and nameObj or nil,
             Box = okBox and boxObj or nil,
-            Health = okLine and hpObj or nil
+            HealthBG = okBG and hpBG or nil,
+            HealthFG = okFG and hpFG or nil
         }
         local d = Drawings[plr]
-        if d.Name then d.Name.Size = 16; d.Name.Center = true; d.Name.Outline = true end
-        if d.Box then d.Box.Thickness = 1.5; d.Box.Filled = false end
-        if d.Health then d.Health.Thickness = 3 end
+        if d.Name then d.Name.Size = 32; d.Name.Center = true; d.Name.Outline = true end -- 2x size
+        if d.Box then d.Box.Thickness = 3; d.Box.Filled = false end -- double thickness
+        if d.HealthBG then d.HealthBG.Filled = true end
+        if d.HealthFG then d.HealthFG.Filled = true end
     end
     return Drawings[plr]
 end
@@ -240,10 +278,9 @@ Players.PlayerRemoving:Connect(function(plr)
     destroyDrawingFor(plr)
 end)
 
--- Also clear highlights on character remove
+-- Character lifecycle helper
 local function onCharacterAdded(plr, char)
     if not char then return end
-    -- When character respawns and Chams are enabled, the highlight will be re-created in the main loop
     char.AncestryChanged:Connect(function(_, parent)
         if not parent then
             local h = char:FindFirstChild("ChamHighlight")
@@ -258,7 +295,6 @@ Players.PlayerAdded:Connect(function(plr)
     end)
 end)
 
--- Prime existing players
 for _, plr in ipairs(Players:GetPlayers()) do
     if plr ~= LocalPlayer then
         if plr.Character then onCharacterAdded(plr, plr.Character) end
@@ -266,57 +302,75 @@ for _, plr in ipairs(Players:GetPlayers()) do
     end
 end
 
--- ESP update loop (every frame, enemy-only, auto for new joiners, cleanup-safe)
+-- ESP update loop (every frame, enemy-only, new joiners handled, cleans up)
 RunService.RenderStepped:Connect(function()
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             local drawings = getDrawing(plr)
-            local visibleAny = false
-
             local char = plr.Character
+            local head = char and char:FindFirstChild("Head")
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             local hum = getHumanoid(char)
 
-            if char and hrp and hum and hum.Health > 0 and isEnemy(plr) then
-                local pos, onscreen = Camera:WorldToViewportPoint(hrp.Position)
-                if onscreen then
-                    -- Compute box size from depth for more stable ESP
-                    local scale = math.clamp(2 / math.max(pos.Z, 0.1), 0, 4)
-                    local w, h = 1000 * scale, 2000 * scale
-                    local boxPos = Vector2.new(pos.X - w/2, pos.Y - h/2)
+            -- Default hide
+            if drawings.Name then drawings.Name.Visible = false end
+            if drawings.Box then drawings.Box.Visible = false end
+            if drawings.HealthBG then drawings.HealthBG.Visible = false end
+            if drawings.HealthFG then drawings.HealthFG.Visible = false end
 
-                    -- Name ESP
+            if char and head and hrp and hum and hum.Health > 0 and isEnemy(plr) then
+                local posH, onH = Camera:WorldToViewportPoint(head.Position)
+                local posC, onC = Camera:WorldToViewportPoint(hrp.Position)
+                if onH or onC then
+                    -- Scale from depth
+                    local z = math.max(posC.Z, 0.1)
+                    local scale = math.clamp(2 / z, 0, 4)
+                    local w, h = 1000 * scale * 1.3, 2000 * scale * 1.3 -- 1.3x box size
+                    local boxPos = Vector2.new(posC.X - w/2, posC.Y - h/2)
+
+                    -- Name color (global or override)
+                    local nameColor = NameOverride.Enabled and NameOverride.Color or CustomColor
+
+                    -- Name (2x size already set). Position just above head
                     if ESP.Enabled.Name and drawings.Name then
-                        drawings.Name.Visible = true; visibleAny = true
+                        drawings.Name.Visible = true
                         drawings.Name.Text = plr.Name
-                        drawings.Name.Color = CustomColor
+                        drawings.Name.Color = nameColor
                         drawings.Name.Transparency = ESP.Opacity.Name
-                        drawings.Name.Position = Vector2.new(pos.X, boxPos.Y - 12)
-                    else
-                        if drawings.Name then drawings.Name.Visible = false end
+                        drawings.Name.Position = Vector2.new(posH.X, posH.Y - 20) -- just above head
                     end
 
-                    -- Box ESP
+                    -- Health bar (horizontal, 3x thickness) above the name
+                    if ESP.Enabled.Health and drawings.HealthBG and drawings.HealthFG then
+                        local hpFrac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        local barW = math.max(60, w) -- at least 60px, generally width of the box
+                        local barH = 9 -- 3x size vs typical ~3px
+                        local gap = 6 -- gap above name
+                        local barX = posH.X - (barW/2)
+                        local barY = (ESP.Enabled.Name and (posH.Y - 20 - gap - barH)) or (boxPos.Y - 12)
+
+                        -- background
+                        drawings.HealthBG.Visible = true
+                        drawings.HealthBG.Size = Vector2.new(barW, barH)
+                        drawings.HealthBG.Position = Vector2.new(barX, barY)
+                        drawings.HealthBG.Color = Color3.new(0.1, 0.1, 0.1)
+                        drawings.HealthBG.Transparency = math.clamp(ESP.Opacity.Health, 0, 1)
+
+                        -- foreground (hp portion)
+                        drawings.HealthFG.Visible = true
+                        drawings.HealthFG.Size = Vector2.new(barW * hpFrac, barH)
+                        drawings.HealthFG.Position = Vector2.new(barX, barY)
+                        drawings.HealthFG.Color = hpColor(hpFrac)
+                        drawings.HealthFG.Transparency = math.clamp(ESP.Opacity.Health, 0, 1)
+                    end
+
+                    -- Box ESP (double line thickness already set)
                     if ESP.Enabled.Box and drawings.Box then
-                        drawings.Box.Visible = true; visibleAny = true
+                        drawings.Box.Visible = true
                         drawings.Box.Size = Vector2.new(w, h)
                         drawings.Box.Position = boxPos
                         drawings.Box.Color = CustomColor
                         drawings.Box.Transparency = ESP.Opacity.Box
-                    else
-                        if drawings.Box then drawings.Box.Visible = false end
-                    end
-
-                    -- Health ESP (green bar along left of box)
-                    if ESP.Enabled.Health and drawings.Health then
-                        drawings.Health.Visible = true; visibleAny = true
-                        local hpFrac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                        drawings.Health.From = Vector2.new(boxPos.X - 6, boxPos.Y + h)
-                        drawings.Health.To = Vector2.new(boxPos.X - 6, boxPos.Y + h - (h * hpFrac))
-                        drawings.Health.Color = Color3.fromRGB(0,255,0)
-                        drawings.Health.Transparency = ESP.Opacity.Health
-                    else
-                        if drawings.Health then drawings.Health.Visible = false end
                     end
 
                     -- Chams (enemy-only)
@@ -333,24 +387,19 @@ RunService.RenderStepped:Connect(function()
                         if hlt then hlt:Destroy() end
                     end
                 else
-                    if drawings.Name then drawings.Name.Visible = false end
-                    if drawings.Box then drawings.Box.Visible = false end
-                    if drawings.Health then drawings.Health.Visible = false end
-                    local hlt = char and char:FindFirstChild("ChamHighlight")
-                    if hlt and not ESP.Enabled.Chams then hlt:Destroy() end
+                    -- off-screen: destroy chams if off
+                    if char then
+                        local hlt = char:FindFirstChild("ChamHighlight")
+                        if hlt and not ESP.Enabled.Chams then hlt:Destroy() end
+                    end
                 end
             else
-                -- Not valid or teammate: hide drawings and remove highlight
-                if drawings.Name then drawings.Name.Visible = false end
-                if drawings.Box then drawings.Box.Visible = false end
-                if drawings.Health then drawings.Health.Visible = false end
+                -- teammate/dead/invalid: remove chams if present
                 if char then
                     local hlt = char:FindFirstChild("ChamHighlight")
                     if hlt then hlt:Destroy() end
                 end
             end
-
-            -- If none visible, keep them hidden (already handled above)
         end
     end
 end)
@@ -398,6 +447,145 @@ end)
 SettingsSection:NewKeybind("Toggle UI (F6)", "Show/Hide menu", Enum.KeyCode.F6, function()
     Library:ToggleUI()
 end)
+
 SettingsSection:NewColorPicker("Global ESP & FOV Color", "Set universal color", CustomColor, function(c)
     CustomColor = c
+end)
+
+-- Name ESP Override lives here (not in Visuals)
+SettingsSection:NewToggle("Name Color Override", "Use a custom color for Name ESP instead of Global", function(s)
+    NameOverride.Enabled = s
+end)
+
+SettingsSection:NewColorPicker("Name ESP Override Color", "Pick the Name ESP color (when override is ON)", NameOverride.Color, function(c)
+    NameOverride.Color = c
+end)
+----------------------------------------------------------------
+-- Utilities Upgrades
+----------------------------------------------------------------
+
+-- Anti-AFK
+local vu = game:GetService("VirtualUser")
+UtilsSection:NewToggle("Anti-AFK", "Prevents idle kick", function(state)
+    if state then
+        LocalPlayer.Idled:Connect(function()
+            vu:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+            task.wait(1)
+            vu:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        end)
+    end
+end)
+
+-- Server Hop (finds lowest player server)
+local HttpService = game:GetService("HttpService")
+UtilsSection:NewButton("Server Hop", "Join a new server", function()
+    local servers = {}
+    local req = pcall(function()
+        local url = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
+        servers = HttpService:JSONDecode(game:HttpGet(url)).data
+    end)
+    if req and #servers > 0 then
+        for _,srv in ipairs(servers) do
+            if srv.playing < srv.maxPlayers and srv.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, LocalPlayer)
+                break
+            end
+        end
+    end
+end)
+
+----------------------------------------------------------------
+-- Movement Upgrade: Custom Gravity (Default → 0.1)
+----------------------------------------------------------------
+local GravityLoop = false
+local GravityVal = workspace.Gravity
+local DefaultGravity = 196.2
+
+MovementSection:NewToggle("Gravity Loop", "Forces Gravity to stay set", function(state)
+    GravityLoop = state
+    if not state then
+        workspace.Gravity = DefaultGravity
+    end
+end)
+
+MovementSection:NewSlider("Custom Gravity", "Change world gravity", DefaultGravity, 0.1, function(val)
+    GravityVal = val
+    if GravityLoop then
+        workspace.Gravity = GravityVal
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if GravityLoop and workspace.Gravity ~= GravityVal then
+        workspace.Gravity = GravityVal
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if GravityLoop and workspace.Gravity ~= LowGravity then
+        workspace.Gravity = LowGravity
+    end
+end)
+
+----------------------------------------------------------------
+-- Combat Upgrades: Smooth Aimbot + Priority + Toggle
+----------------------------------------------------------------
+local AimbotToggleKey = Enum.KeyCode.R -- can be changed in Settings
+local AimbotToggled = false
+local AimbotSmoothness = 0.25
+local AimbotPriority = "Closest" -- "Closest" or "LowestHP"
+
+CombatSection:NewSlider("Smoothness", "How smoothly aim follows (0=snappy)", 100, 0, function(val)
+    AimbotSmoothness = val/100
+end)
+
+CombatSection:NewDropdown("Priority", "Target priority system", {"Closest", "LowestHP"}, function(opt)
+    AimbotPriority = opt
+end)
+
+CombatSection:NewKeybind("Aimbot Toggle Key", "Keybind to toggle aimbot (on/off)", AimbotToggleKey, function()
+    AimbotToggled = not AimbotToggled
+end)
+
+-- Modify target finder
+local function getBestTarget(radius)
+    local mouse = UIS:GetMouseLocation()
+    local best, bestScore = nil, math.huge
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and isEnemy(plr) and plr.Character and plr.Character:FindFirstChild("Head") then
+            local pos, vis = Camera:WorldToViewportPoint(plr.Character.Head.Position)
+            if vis then
+                local dist2d = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
+                if dist2d <= radius then
+                    if AimbotPriority == "Closest" then
+                        if dist2d < bestScore then
+                            best, bestScore = plr, dist2d
+                        end
+                    elseif AimbotPriority == "LowestHP" then
+                        local hum = getHumanoid(plr.Character)
+                        if hum and hum.Health < bestScore then
+                            best, bestScore = plr, hum.Health
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Modify RenderStepped for aimbot
+RunService.RenderStepped:Connect(function()
+    if AimbotEnabled and (UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) or AimbotToggled) then
+        local target = getBestTarget(AimbotFOV)
+        if target and target.Character and target.Character:FindFirstChild("Head") then
+            local headPos = target.Character.Head.Position
+            local newCF = CFrame.new(Camera.CFrame.Position, headPos)
+            if AimbotSmoothness > 0 then
+                Camera.CFrame = Camera.CFrame:Lerp(newCF, AimbotSmoothness)
+            else
+                Camera.CFrame = newCF
+            end
+        end
+    end
 end)
